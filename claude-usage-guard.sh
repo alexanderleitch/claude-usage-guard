@@ -21,6 +21,7 @@ CFG="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 SELF="$CFG/usage-guard.sh"
 SETTINGS="$CFG/settings.json"
 PREV="$CFG/usage-guard.prev-statusline"
+BADGES="$CFG/usage-guard.badges"     # one shell command per line; each gets the payload on stdin, output is prefixed to the line
 PCT="${CLAUDE_USAGE_GUARD_PCT:-85}"
 CACHE_DIR="${TMPDIR:-/tmp}"
 
@@ -36,6 +37,15 @@ cmd_statusline() {
           fr:(.rate_limits.five_hour.resets_at // null),
           ctx:(.context_window.used_percentage // null)}' <<<"$input" \
     >"$(cache_path "$sid")" 2>/dev/null || true
+  local badges="" b
+  if [ -s "$BADGES" ]; then
+    while IFS= read -r cmd; do
+      [ -n "$cmd" ] && [ "${cmd#\#}" = "$cmd" ] || continue
+      b=$(printf '%s' "$input" | bash -c "$cmd" 2>/dev/null || true)
+      [ -n "$b" ] && badges="$badges$b "
+    done <"$BADGES"
+  fi
+  printf '%s' "$badges"
   jq -r '
     def pc(x): if x == null then "-" else ((x|floor)|tostring) + "%" end;
     def rs(x): if x == null then "" else " (" + (x|floor|strflocaltime("%H:%M")) + ")" end;
@@ -74,6 +84,14 @@ cmd_install() {
   local cur tmp
   cur=$(jq -r '.statusLine.command // empty' "$SETTINGS")
   if [ -n "$cur" ] && [[ "$cur" != *usage-guard.sh* ]]; then printf '%s' "$cur" >"$PREV"; fi
+  # badges: known plugin statusline scripts, resolved at runtime so plugin version bumps survive
+  if [ ! -e "$BADGES" ]; then
+    {
+      echo '# one command per line; payload on stdin; output is shown before the usage line'
+      echo 'f=$(ls -d "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/plugins/cache/ponytail/ponytail/*/hooks/ponytail-statusline.sh 2>/dev/null | tail -1); [ -n "$f" ] && bash "$f"'
+      echo 'f=$(ls -d "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/plugins/cache/caveman/caveman/*/src/hooks/caveman-statusline.sh 2>/dev/null | tail -1); [ -n "$f" ] && bash "$f"'
+    } >"$BADGES"
+  fi
   tmp=$(mktemp)
   jq --arg sl "bash '$SELF' statusline" --arg st "bash '$SELF' stop" '
     .statusLine = {type:"command", command:$sl}
@@ -94,7 +112,7 @@ cmd_uninstall() {
     if $prev == "" then del(.statusLine) else .statusLine = {type:"command", command:$prev} end
     | if .hooks.Stop then .hooks.Stop |= map(select(([.hooks[]?.command // ""] | any(contains("usage-guard.sh"))) | not)) else . end
   ' "$SETTINGS" >"$tmp" && mv "$tmp" "$SETTINGS"
-  rm -f "$SELF" "$PREV"
+  rm -f "$SELF" "$PREV" "$BADGES"
   echo "removed. restart Claude Code."
 }
 
@@ -104,6 +122,9 @@ cmd_selftest() {
   hi='{"session_id":"t1","rate_limits":{"five_hour":{"used_percentage":91.4,"resets_at":1758640000},"seven_day":{"used_percentage":40}},"context_window":{"used_percentage":33},"model":{"display_name":"Test"}}'
   lo='{"session_id":"t1","rate_limits":{"five_hour":{"used_percentage":10},"seven_day":{"used_percentage":12}},"context_window":{"used_percentage":5}}'
   out=$(printf '%s' "$hi" | bash "$0" statusline);                 [[ "$out" == "5h 91% ("*") | 7d 40% | ctx 33% | Test" ]] || { echo "FAIL statusline: $out"; exit 1; }
+  printf '# comment\nprintf "[B1]"\njq -r .model.display_name\n' >"$d/usage-guard.badges"
+  out=$(printf '%s' "$hi" | bash "$0" statusline);                 [[ "$out" == "[B1] Test 5h 91% ("* ]]                   || { echo "FAIL badges: $out"; exit 1; }
+  rm "$d/usage-guard.badges"
   out=$(printf '{"session_id":"t1"}' | bash "$0" stop);            [[ "$out" == *'"decision":"block"'* ]]            || { echo "FAIL stop should block: $out"; exit 1; }
   out=$(printf '{"session_id":"t1"}' | bash "$0" stop);            [ -z "$out" ]                                    || { echo "FAIL stop should block once: $out"; exit 1; }
   out=$(printf '{"session_id":"t1","stop_hook_active":true}' | bash "$0" stop); [ -z "$out" ]                       || { echo "FAIL stop_hook_active loop guard: $out"; exit 1; }

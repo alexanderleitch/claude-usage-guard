@@ -4,7 +4,7 @@ One bash script. Shows Claude Code plan-limit usage in the status line and asks 
 commit + write a handoff note before the limit cuts the session off.
 
 ```
-5h 42% (15:45) | 7d 18% | ctx 31% | Opus
+[PONYTAIL] [CAVEMAN] 5h 42% (15:45) | 7d 18% | ctx 31% | Opus
 ```
 
 ## Install
@@ -25,6 +25,9 @@ hooks are untouched. `~/.claude/settings.json` is backed up to `settings.json.ba
 - `stop`: at the end of each turn, if the 5-hour or 7-day window is at or above the threshold
   (default 85%, `CLAUDE_USAGE_GUARD_PCT`), returns `decision: "block"` with a reason telling
   Claude to commit, write `PROGRESS.md`, and stop. Fires once per session per window.
+- Badges: `~/.claude/usage-guard.badges` holds one shell command per line; each gets the payload on
+  stdin and its output is shown before the usage line. Install pre-fills it with the ponytail and
+  caveman plugin badges when those plugins are present. Edit the file to add or remove badges.
 - Zero API calls. Costs no usage.
 
 ## Limits
