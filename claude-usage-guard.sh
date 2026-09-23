@@ -66,15 +66,15 @@ cmd_statusline() {
   # colours: green <50, yellow <threshold, red >=threshold; CLAUDE_USAGE_GUARD_COLOR=0 disables
   jq -r --argjson pct "$PCT" --argjson color "${CLAUDE_USAGE_GUARD_COLOR:-1}" '
     def esc(c): if $color == 1 then "\u001b[" + c + "m" else "" end;
-    def dim: esc("2"); def rst: esc("0");
+    def frame: esc("38;5;67"); def rst: esc("0");
     def tone(x): if x == null then esc("2") elif x >= $pct then esc("1;31") elif x >= 50 then esc("33") else esc("32") end;
     def pc(x): if x == null then "-" else ((x|floor)|tostring) + "%" end;
-    def rs(x): if x == null then "" else dim + " (" + (x|floor|strflocaltime("%H:%M")) + ")" + rst end;
-    def seg(l; x): dim + l + " " + rst + tone(x) + pc(x) + rst;
-    [ seg("5h"; .rate_limits.five_hour.used_percentage) + rs(.rate_limits.five_hour.resets_at),
-      seg("7d"; .rate_limits.seven_day.used_percentage),
-      seg("ctx"; .context_window.used_percentage),
-      (.model.display_name // empty | esc("36") + . + rst) ] | join(dim + " | " + rst)' <<<"$input"
+    def rs(x): if x == null then "" else esc("2") + " " + (x|floor|strflocaltime("%H:%M")) + rst end;
+    def val(x): tone(x) + pc(x) + rst;
+    def box(word; body): frame + "[" + word + " " + rst + body + frame + "]" + rst;
+    [ box("USAGE"; "5h " + val(.rate_limits.five_hour.used_percentage) + rs(.rate_limits.five_hour.resets_at) + frame + " · " + rst + "7d " + val(.rate_limits.seven_day.used_percentage)),
+      box("CONTEXT"; val(.context_window.used_percentage)),
+      (.model.display_name // empty | box("MODEL"; esc("36") + . + rst)) ] | join(" ")' <<<"$input"
   # chain whatever status line command was configured before install
   if [ -s "$PREV" ] && ! is_badge_cmd "$(cat "$PREV")"; then printf '%s' "$input" | bash -c "$(cat "$PREV")" 2>/dev/null || true; fi
 }
@@ -145,23 +145,23 @@ cmd_selftest() {
   [[ "$out" == *$'\e[1;31m90%'* && "$out" == *$'\e[32m10%'* ]] || { echo "FAIL colour: $(printf '%q' "$out")"; exit 1; }
   hi='{"session_id":"t1","rate_limits":{"five_hour":{"used_percentage":91.4,"resets_at":1758640000},"seven_day":{"used_percentage":40}},"context_window":{"used_percentage":33},"model":{"display_name":"Test"}}'
   lo='{"session_id":"t1","rate_limits":{"five_hour":{"used_percentage":10},"seven_day":{"used_percentage":12}},"context_window":{"used_percentage":5}}'
-  out=$(printf '%s' "$hi" | bash "$0" statusline);                 [[ "$out" == "5h 91% ("*") | 7d 40% | ctx 33% | Test" ]] || { echo "FAIL statusline: $out"; exit 1; }
+  out=$(printf '%s' "$hi" | bash "$0" statusline);                 [[ "$out" == "[USAGE 5h 91% "*" · 7d 40%] [CONTEXT 33%] [MODEL Test]" ]] || { echo "FAIL statusline: $out"; exit 1; }
   printf '# comment\nprintf "[B1]"\njq -r .model.display_name\n' >"$d/usage-guard.badges"
-  out=$(printf '%s' "$hi" | bash "$0" statusline);                 [[ "$out" == "[B1] Test 5h 91% ("* ]]                   || { echo "FAIL badges: $out"; exit 1; }
+  out=$(printf '%s' "$hi" | bash "$0" statusline);                 [[ "$out" == "[B1] Test [USAGE 5h 91% "* ]]                   || { echo "FAIL badges: $out"; exit 1; }
   rm "$d/usage-guard.badges"
   printf 'bash /x/ponytail-statusline.sh' >"$d/usage-guard.prev-statusline"; printf 'printf "[P]"' >"$d/usage-guard.badges"
-  out=$(printf '%s' "$hi" | bash "$0" statusline);                 [[ "$out" == "[P] 5h 91% ("*"Test" ]]                     || { echo "FAIL badge prev should be skipped: $out"; exit 1; }
+  out=$(printf '%s' "$hi" | bash "$0" statusline);                 [[ "$out" == "[P] [USAGE 5h 91% "*"[MODEL Test]" ]]                     || { echo "FAIL badge prev should be skipped: $out"; exit 1; }
   rm "$d/usage-guard.prev-statusline" "$d/usage-guard.badges"
   out=$(printf '{"session_id":"t1"}' | bash "$0" stop);            [[ "$out" == *'"decision":"block"'* ]]            || { echo "FAIL stop should block: $out"; exit 1; }
   out=$(printf '{"session_id":"t1"}' | bash "$0" stop);            [ -z "$out" ]                                    || { echo "FAIL stop should block once: $out"; exit 1; }
   out=$(printf '{"session_id":"t1","stop_hook_active":true}' | bash "$0" stop); [ -z "$out" ]                       || { echo "FAIL stop_hook_active loop guard: $out"; exit 1; }
   printf '%s' "$lo" | bash "$0" statusline >/dev/null
   out=$(printf '{"session_id":"t1"}' | bash "$0" stop);            [ -z "$out" ]                                    || { echo "FAIL stop below threshold: $out"; exit 1; }
-  out=$(printf '{"session_id":"t2"}' | bash "$0" statusline);      [[ "$out" == "5h - | 7d - | ctx -" ]]            || { echo "FAIL statusline without rate_limits: $out"; exit 1; }
+  out=$(printf '{"session_id":"t2"}' | bash "$0" statusline);      [[ "$out" == "[USAGE 5h - · 7d -] [CONTEXT -]" ]]            || { echo "FAIL statusline without rate_limits: $out"; exit 1; }
   printf '%s' "$hi" | bash "$0" statusline >/dev/null
-  out=$(printf '{"session_id":"t1","context_window":{"used_percentage":50}}' | bash "$0" statusline); [[ "$out" == "5h 91% ("*") | 7d 40% | ctx 50%" ]] || { echo "FAIL sticky limits: $out"; exit 1; }
-  out=$(printf '{"session_id":"t1","context_window":{"context_window_size":200000,"current_usage":{"input_tokens":40000,"cache_read_input_tokens":20000}}}' | bash "$0" statusline); [[ "$out" == *"| ctx 30%" ]] || { echo "FAIL ctx from tokens: $out"; exit 1; }
-  out=$(printf '{"session_id":"t1"}' | bash "$0" statusline);      [[ "$out" == *"| ctx 30%" ]]                      || { echo "FAIL sticky ctx: $out"; exit 1; }
+  out=$(printf '{"session_id":"t1","context_window":{"used_percentage":50}}' | bash "$0" statusline); [[ "$out" == "[USAGE 5h 91% "*" · 7d 40%] [CONTEXT 50%]" ]] || { echo "FAIL sticky limits: $out"; exit 1; }
+  out=$(printf '{"session_id":"t1","context_window":{"context_window_size":200000,"current_usage":{"input_tokens":40000,"cache_read_input_tokens":20000}}}' | bash "$0" statusline); [[ "$out" == *"[CONTEXT 30%]" ]] || { echo "FAIL ctx from tokens: $out"; exit 1; }
+  out=$(printf '{"session_id":"t1"}' | bash "$0" statusline);      [[ "$out" == *"[CONTEXT 30%]" ]]                      || { echo "FAIL sticky ctx: $out"; exit 1; }
   rm -rf "$d"; echo "selftest ok"
 }
 

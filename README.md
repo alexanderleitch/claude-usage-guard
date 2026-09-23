@@ -4,7 +4,7 @@ One bash script. Shows Claude Code plan-limit usage in the status line and asks 
 commit + write a handoff note before the limit cuts the session off.
 
 ```
-[PONYTAIL] [CAVEMAN] 5h 42% (15:45) | 7d 18% | ctx 31% | Opus
+[PONYTAIL] [CAVEMAN] [USAGE 5h 42% 15:45 · 7d 18%] [CONTEXT 31%] [MODEL Opus]
 ```
 
 ## Install
