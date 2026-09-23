@@ -36,6 +36,14 @@ cmd_statusline() {
   [ -n "$input" ] || exit 0
   sid=$(jq -r '.session_id // "unknown"' <<<"$input")
   local cache; cache=$(cache_path "$sid")
+  # ctx: fall back to tokens/size when used_percentage is absent; keep last cached value when nothing usable arrives
+  input=$(jq -c --slurpfile c <(cat "$cache" 2>/dev/null || echo null) '
+    .context_window.used_percentage = (
+      .context_window.used_percentage
+      // (if (.context_window.current_usage and (.context_window.context_window_size // 0) > 0)
+          then ((.context_window.current_usage | (.input_tokens // 0) + (.cache_read_input_tokens // 0) + (.cache_creation_input_tokens // 0)) / .context_window.context_window_size * 100)
+          else null end)
+      // ($c[0].ctx? // null))' <<<"$input")
   # rate_limits is only present on some refreshes; keep the last seen values so the line stays populated
   if [ "$(jq -r '.rate_limits.five_hour.used_percentage // .rate_limits.seven_day.used_percentage // empty' <<<"$input")" != "" ]; then
     jq -c '{f:(.rate_limits.five_hour.used_percentage // null),
@@ -44,6 +52,7 @@ cmd_statusline() {
             ctx:(.context_window.used_percentage // null)}' <<<"$input" >"$cache" 2>/dev/null || true
   elif [ -s "$cache" ]; then
     input=$(jq -c --slurpfile c "$cache" '.rate_limits = {five_hour:{used_percentage:$c[0].f, resets_at:$c[0].fr}, seven_day:{used_percentage:$c[0].w}}' <<<"$input")
+    jq -c --slurpfile c "$cache" '$c[0] + {ctx:(.context_window.used_percentage // $c[0].ctx)}' <<<"$input" >"$cache.tmp" 2>/dev/null && mv "$cache.tmp" "$cache" || true
   fi
   local badges="" b
   if [ -s "$BADGES" ]; then
@@ -144,6 +153,8 @@ cmd_selftest() {
   out=$(printf '{"session_id":"t2"}' | bash "$0" statusline);      [[ "$out" == "5h - | 7d - | ctx -" ]]            || { echo "FAIL statusline without rate_limits: $out"; exit 1; }
   printf '%s' "$hi" | bash "$0" statusline >/dev/null
   out=$(printf '{"session_id":"t1","context_window":{"used_percentage":50}}' | bash "$0" statusline); [[ "$out" == "5h 91% ("*") | 7d 40% | ctx 50%" ]] || { echo "FAIL sticky limits: $out"; exit 1; }
+  out=$(printf '{"session_id":"t1","context_window":{"context_window_size":200000,"current_usage":{"input_tokens":40000,"cache_read_input_tokens":20000}}}' | bash "$0" statusline); [[ "$out" == *"| ctx 30%" ]] || { echo "FAIL ctx from tokens: $out"; exit 1; }
+  out=$(printf '{"session_id":"t1"}' | bash "$0" statusline);      [[ "$out" == *"| ctx 30%" ]]                      || { echo "FAIL sticky ctx: $out"; exit 1; }
   rm -rf "$d"; echo "selftest ok"
 }
 
