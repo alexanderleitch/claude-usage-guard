@@ -28,7 +28,7 @@ hooks are untouched. `~/.claude/settings.json` is backed up to `settings.json.ba
 - Badges: `~/.claude/usage-guard.badges` holds one shell command per line; each gets the payload on
   stdin and its output is shown before the usage line. Install pre-fills it with the ponytail and
   caveman plugin badges when those plugins are present. Edit the file to add or remove badges.
-- Colours: green under 50%, yellow under the threshold, bold red at or above it. `CLAUDE_USAGE_GUARD_COLOR=0` for plain text.
+- Colours: each box has its own colour; a percentage keeps that colour, turns orange from 50% and bold red from the threshold. `CLAUDE_USAGE_GUARD_COLOR=0` for plain text.
 - Zero API calls. Costs no usage.
 
 ## Limits

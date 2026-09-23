@@ -63,18 +63,19 @@ cmd_statusline() {
     done <"$BADGES"
   fi
   printf '%s' "$badges"
-  # colours: green <50, yellow <threshold, red >=threshold; CLAUDE_USAGE_GUARD_COLOR=0 disables
+  # colours: each box its own colour; % inherits it, orange from 50%, bold red from the threshold. CLAUDE_USAGE_GUARD_COLOR=0 disables
   jq -r --argjson pct "$PCT" --argjson color "${CLAUDE_USAGE_GUARD_COLOR:-1}" '
     def esc(c): if $color == 1 then "\u001b[" + c + "m" else "" end;
-    def frame: esc("38;5;67"); def rst: esc("0");
-    def tone(x): if x == null then esc("2") elif x >= $pct then esc("1;31") elif x >= 50 then esc("33") else esc("32") end;
+    def rst: esc("0");
+    def tone(x; base): if x == null then esc("2") elif x >= $pct then esc("1;38;5;196") elif x >= 50 then esc("38;5;208") else esc(base) end;
     def pc(x): if x == null then "-" else ((x|floor)|tostring) + "%" end;
     def rs(x): if x == null then "" else esc("2") + " " + (x|floor|strflocaltime("%H:%M")) + rst end;
-    def val(x): tone(x) + pc(x) + rst;
-    def box(word; body): frame + "[" + word + " " + rst + body + frame + "]" + rst;
-    [ box("USAGE"; "5h " + val(.rate_limits.five_hour.used_percentage) + rs(.rate_limits.five_hour.resets_at) + frame + " · " + rst + "7d " + val(.rate_limits.seven_day.used_percentage)),
-      box("CONTEXT"; val(.context_window.used_percentage)),
-      (.model.display_name // empty | box("MODEL"; esc("36") + . + rst)) ] | join(" ")' <<<"$input"
+    def val(x; base): tone(x; base) + pc(x) + rst;
+    def box(word; base; body): esc(base) + "[" + word + " " + body + esc(base) + "]" + rst;
+    ("38;5;75") as $u | ("38;5;141") as $c | ("38;5;79") as $m |
+    [ box("USAGE"; $u; "5h " + val(.rate_limits.five_hour.used_percentage; $u) + rs(.rate_limits.five_hour.resets_at) + esc($u) + " · 7d " + val(.rate_limits.seven_day.used_percentage; $u)),
+      box("CONTEXT"; $c; val(.context_window.used_percentage; $c)),
+      (.model.display_name // empty | box("MODEL"; $m; .)) ] | join(" ")' <<<"$input"
   # chain whatever status line command was configured before install
   if [ -s "$PREV" ] && ! is_badge_cmd "$(cat "$PREV")"; then printf '%s' "$input" | bash -c "$(cat "$PREV")" 2>/dev/null || true; fi
 }
@@ -142,7 +143,7 @@ cmd_selftest() {
   local d out
   d=$(mktemp -d); export CLAUDE_CONFIG_DIR="$d" TMPDIR="$d" CLAUDE_USAGE_GUARD_COLOR=0
   out=$(printf '{"session_id":"c","rate_limits":{"five_hour":{"used_percentage":90},"seven_day":{"used_percentage":10}}}' | CLAUDE_USAGE_GUARD_COLOR=1 bash "$0" statusline)
-  [[ "$out" == *$'\e[1;31m90%'* && "$out" == *$'\e[32m10%'* ]] || { echo "FAIL colour: $(printf '%q' "$out")"; exit 1; }
+  [[ "$out" == *$'\e[1;38;5;196m90%'* && "$out" == *$'\e[38;5;75m10%'* ]] || { echo "FAIL colour: $(printf '%q' "$out")"; exit 1; }
   hi='{"session_id":"t1","rate_limits":{"five_hour":{"used_percentage":91.4,"resets_at":1758640000},"seven_day":{"used_percentage":40}},"context_window":{"used_percentage":33},"model":{"display_name":"Test"}}'
   lo='{"session_id":"t1","rate_limits":{"five_hour":{"used_percentage":10},"seven_day":{"used_percentage":12}},"context_window":{"used_percentage":5}}'
   out=$(printf '%s' "$hi" | bash "$0" statusline);                 [[ "$out" == "[USAGE 5h 91% "*" · 7d 40%] [CONTEXT 33%] [MODEL Test]" ]] || { echo "FAIL statusline: $out"; exit 1; }
