@@ -35,11 +35,16 @@ cmd_statusline() {
   input=$(cat)
   [ -n "$input" ] || exit 0
   sid=$(jq -r '.session_id // "unknown"' <<<"$input")
-  jq -c '{f:(.rate_limits.five_hour.used_percentage // null),
-          w:(.rate_limits.seven_day.used_percentage // null),
-          fr:(.rate_limits.five_hour.resets_at // null),
-          ctx:(.context_window.used_percentage // null)}' <<<"$input" \
-    >"$(cache_path "$sid")" 2>/dev/null || true
+  local cache; cache=$(cache_path "$sid")
+  # rate_limits is only present on some refreshes; keep the last seen values so the line stays populated
+  if [ "$(jq -r '.rate_limits.five_hour.used_percentage // .rate_limits.seven_day.used_percentage // empty' <<<"$input")" != "" ]; then
+    jq -c '{f:(.rate_limits.five_hour.used_percentage // null),
+            w:(.rate_limits.seven_day.used_percentage // null),
+            fr:(.rate_limits.five_hour.resets_at // null),
+            ctx:(.context_window.used_percentage // null)}' <<<"$input" >"$cache" 2>/dev/null || true
+  elif [ -s "$cache" ]; then
+    input=$(jq -c --slurpfile c "$cache" '.rate_limits = {five_hour:{used_percentage:$c[0].f, resets_at:$c[0].fr}, seven_day:{used_percentage:$c[0].w}}' <<<"$input")
+  fi
   local badges="" b
   if [ -s "$BADGES" ]; then
     while IFS= read -r cmd || [ -n "$cmd" ]; do
@@ -137,6 +142,8 @@ cmd_selftest() {
   printf '%s' "$lo" | bash "$0" statusline >/dev/null
   out=$(printf '{"session_id":"t1"}' | bash "$0" stop);            [ -z "$out" ]                                    || { echo "FAIL stop below threshold: $out"; exit 1; }
   out=$(printf '{"session_id":"t2"}' | bash "$0" statusline);      [[ "$out" == "5h - | 7d - | ctx -" ]]            || { echo "FAIL statusline without rate_limits: $out"; exit 1; }
+  printf '%s' "$hi" | bash "$0" statusline >/dev/null
+  out=$(printf '{"session_id":"t1","context_window":{"used_percentage":50}}' | bash "$0" statusline); [[ "$out" == "5h 91% ("*") | 7d 40% | ctx 50%" ]] || { echo "FAIL sticky limits: $out"; exit 1; }
   rm -rf "$d"; echo "selftest ok"
 }
 
