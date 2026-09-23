@@ -63,13 +63,18 @@ cmd_statusline() {
     done <"$BADGES"
   fi
   printf '%s' "$badges"
-  jq -r '
+  # colours: green <50, yellow <threshold, red >=threshold; CLAUDE_USAGE_GUARD_COLOR=0 disables
+  jq -r --argjson pct "$PCT" --argjson color "${CLAUDE_USAGE_GUARD_COLOR:-1}" '
+    def esc(c): if $color == 1 then "\u001b[" + c + "m" else "" end;
+    def dim: esc("2"); def rst: esc("0");
+    def tone(x): if x == null then esc("2") elif x >= $pct then esc("1;31") elif x >= 50 then esc("33") else esc("32") end;
     def pc(x): if x == null then "-" else ((x|floor)|tostring) + "%" end;
-    def rs(x): if x == null then "" else " (" + (x|floor|strflocaltime("%H:%M")) + ")" end;
-    [ "5h " + pc(.rate_limits.five_hour.used_percentage) + rs(.rate_limits.five_hour.resets_at),
-      "7d " + pc(.rate_limits.seven_day.used_percentage),
-      "ctx " + pc(.context_window.used_percentage),
-      (.model.display_name // empty) ] | join(" | ")' <<<"$input"
+    def rs(x): if x == null then "" else dim + " (" + (x|floor|strflocaltime("%H:%M")) + ")" + rst end;
+    def seg(l; x): dim + l + " " + rst + tone(x) + pc(x) + rst;
+    [ seg("5h"; .rate_limits.five_hour.used_percentage) + rs(.rate_limits.five_hour.resets_at),
+      seg("7d"; .rate_limits.seven_day.used_percentage),
+      seg("ctx"; .context_window.used_percentage),
+      (.model.display_name // empty | esc("36") + . + rst) ] | join(dim + " | " + rst)' <<<"$input"
   # chain whatever status line command was configured before install
   if [ -s "$PREV" ] && ! is_badge_cmd "$(cat "$PREV")"; then printf '%s' "$input" | bash -c "$(cat "$PREV")" 2>/dev/null || true; fi
 }
@@ -135,7 +140,9 @@ cmd_uninstall() {
 
 cmd_selftest() {
   local d out
-  d=$(mktemp -d); export CLAUDE_CONFIG_DIR="$d" TMPDIR="$d"
+  d=$(mktemp -d); export CLAUDE_CONFIG_DIR="$d" TMPDIR="$d" CLAUDE_USAGE_GUARD_COLOR=0
+  out=$(printf '{"session_id":"c","rate_limits":{"five_hour":{"used_percentage":90},"seven_day":{"used_percentage":10}}}' | CLAUDE_USAGE_GUARD_COLOR=1 bash "$0" statusline)
+  [[ "$out" == *$'\e[1;31m90%'* && "$out" == *$'\e[32m10%'* ]] || { echo "FAIL colour: $(printf '%q' "$out")"; exit 1; }
   hi='{"session_id":"t1","rate_limits":{"five_hour":{"used_percentage":91.4,"resets_at":1758640000},"seven_day":{"used_percentage":40}},"context_window":{"used_percentage":33},"model":{"display_name":"Test"}}'
   lo='{"session_id":"t1","rate_limits":{"five_hour":{"used_percentage":10},"seven_day":{"used_percentage":12}},"context_window":{"used_percentage":5}}'
   out=$(printf '%s' "$hi" | bash "$0" statusline);                 [[ "$out" == "5h 91% ("*") | 7d 40% | ctx 33% | Test" ]] || { echo "FAIL statusline: $out"; exit 1; }
