@@ -25,6 +25,9 @@ BADGES="$CFG/usage-guard.badges"     # one shell command per line; each gets the
 PCT="${CLAUDE_USAGE_GUARD_PCT:-98}"
 CACHE_DIR="${TMPDIR:-/tmp}"
 
+# Windows jq ends lines with CRLF; strip CR so string/number compares work everywhere (pipefail keeps jq's exit status)
+jq() { command jq "$@" | tr -d '\r'; }
+
 # a previous statusLine that is itself a plugin badge is already covered by the badges file
 is_badge_cmd() { case "$1" in *ponytail-statusline*|*caveman-statusline*) return 0 ;; *) return 1 ;; esac; }
 
@@ -143,6 +146,7 @@ cmd_uninstall() {
 cmd_selftest() {
   local d out
   d=$(mktemp -d); export CLAUDE_CONFIG_DIR="$d" TMPDIR="$d" CLAUDE_USAGE_GUARD_COLOR=0 CLAUDE_USAGE_GUARD_PCT=85
+  exec 2>"$d/stderr"   # any stderr from the checks below is a failure
   out=$(printf '{"session_id":"c","rate_limits":{"five_hour":{"used_percentage":90},"seven_day":{"used_percentage":10}}}' | CLAUDE_USAGE_GUARD_COLOR=1 bash "$0" statusline)
   [[ "$out" == *$'\e[1;38;5;167m90%'* && "$out" == *$'\e[38;5;67m10%'* ]] || { echo "FAIL colour: $(printf '%q' "$out")"; exit 1; }
   hi='{"session_id":"t1","rate_limits":{"five_hour":{"used_percentage":91.4,"resets_at":1758640000},"seven_day":{"used_percentage":40}},"context_window":{"used_percentage":33},"model":{"display_name":"Test"}}'
@@ -157,6 +161,8 @@ cmd_selftest() {
   out=$(printf '{"session_id":"t1"}' | bash "$0" stop);            [[ "$out" == *'"decision":"block"'* ]]            || { echo "FAIL stop should block: $out"; exit 1; }
   out=$(printf '{"session_id":"t1"}' | bash "$0" stop);            [ -z "$out" ]                                    || { echo "FAIL stop should block once: $out"; exit 1; }
   out=$(printf '{"session_id":"t1","stop_hook_active":true}' | bash "$0" stop); [ -z "$out" ]                       || { echo "FAIL stop_hook_active loop guard: $out"; exit 1; }
+  printf '{"f":10,"w":99}' >"$d/cc-limits-w7.json"
+  out=$(printf '{"session_id":"w7"}' | bash "$0" stop);            [[ "$out" == *'"decision":"block"'* ]]            || { echo "FAIL 7-day-only should block: $out"; exit 1; }
   printf '%s' "$lo" | bash "$0" statusline >/dev/null
   out=$(printf '{"session_id":"t1"}' | bash "$0" stop);            [ -z "$out" ]                                    || { echo "FAIL stop below threshold: $out"; exit 1; }
   out=$(printf '{"session_id":"t2"}' | bash "$0" statusline);      [[ "$out" == "[USAGE 5h - · 7d -] [CONTEXT -]" ]]            || { echo "FAIL statusline without rate_limits: $out"; exit 1; }
@@ -164,6 +170,7 @@ cmd_selftest() {
   out=$(printf '{"session_id":"t1","context_window":{"used_percentage":50}}' | bash "$0" statusline); [[ "$out" == "[USAGE 5h 91% "*" · 7d 40%] [CONTEXT 50%]" ]] || { echo "FAIL sticky limits: $out"; exit 1; }
   out=$(printf '{"session_id":"t1","context_window":{"context_window_size":200000,"current_usage":{"input_tokens":40000,"cache_read_input_tokens":20000}}}' | bash "$0" statusline); [[ "$out" == *"[CONTEXT 30%]" ]] || { echo "FAIL ctx from tokens: $out"; exit 1; }
   out=$(printf '{"session_id":"t1"}' | bash "$0" statusline);      [[ "$out" == *"[CONTEXT 30%]" ]]                      || { echo "FAIL sticky ctx: $out"; exit 1; }
+  [ -s "$d/stderr" ] && { echo "FAIL stderr not empty:"; cat "$d/stderr"; exit 1; }
   rm -rf "$d"; echo "selftest ok"
 }
 
