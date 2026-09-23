@@ -37,7 +37,8 @@ cmd_statusline() {
   sid=$(jq -r '.session_id // "unknown"' <<<"$input")
   local cache; cache=$(cache_path "$sid")
   # ctx: fall back to tokens/size when used_percentage is absent; keep last cached value when nothing usable arrives
-  input=$(jq -c --slurpfile c <(cat "$cache" 2>/dev/null || echo null) '
+  local prev; prev=$(cat "$cache" 2>/dev/null || true); [ -n "$prev" ] || prev=null
+  input=$(jq -c --argjson c "[$prev]" '
     .context_window.used_percentage = (
       .context_window.used_percentage
       // (if (.context_window.current_usage and (.context_window.context_window_size // 0) > 0)
