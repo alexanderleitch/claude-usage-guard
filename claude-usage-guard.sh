@@ -85,7 +85,7 @@ cmd_install() {
   command -v jq >/dev/null || { echo "jq is required (brew install jq | winget install jqlang.jq | apt install jq)" >&2; exit 1; }
   mkdir -p "$CFG"
   if [ -s "${BASH_SOURCE[0]:-}" ] && [ "${BASH_SOURCE[0]}" != "$SELF" ]; then cp "${BASH_SOURCE[0]}" "$SELF"
-  elif [ ! -s "$SELF" ] || [ -z "${BASH_SOURCE[0]:-}" ]; then curl -fsSL "$RAW_URL" -o "$SELF"; fi
+  elif [ ! -s "$SELF" ] || [ -z "${BASH_SOURCE[0]:-}" ]; then curl -fsSL "$RAW_URL?$(date +%s)" -o "$SELF"; fi
   chmod +x "$SELF"
   [ -s "$SETTINGS" ] || printf '{}\n' >"$SETTINGS"
   cp "$SETTINGS" "$SETTINGS.bak-usage-guard"
