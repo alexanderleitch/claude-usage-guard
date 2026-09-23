@@ -43,3 +43,14 @@ hooks are untouched. `~/.claude/settings.json` is backed up to `settings.json.ba
 bash ~/.claude/usage-guard.sh selftest
 bash ~/.claude/usage-guard.sh uninstall
 ```
+
+## Spinner verbs (bonus)
+
+`spinner-verbs.json` holds a set of grumpy spinner verbs, ASCII art and emoji included. Install them
+into `~/.claude/settings.json` (replaces `spinnerVerbs`, backup at `settings.json.bak-spinner`):
+
+```bash
+curl -fsSL "https://raw.githubusercontent.com/alexanderleitch/claude-usage-guard/main/install-spinner.sh?$(date +%s)" | bash
+```
+
+Edit `spinner-verbs.json` in a clone and run `bash install-spinner.sh` to use your own list.
