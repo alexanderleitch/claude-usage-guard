@@ -1,15 +1,15 @@
 # claude-usage-guard
 
-A single bash script for [Claude Code](https://code.claude.com) that does two things:
+A small bash tool for [Claude Code](https://code.claude.com) (one script plus an optional spinner-verb installer) that does two things:
 
 1. **Shows your plan-limit usage in the status line**, with the 5-hour and 7-day windows, context-window fill, and current model, next to any plugin badges you already have.
-2. **Stops cleanly before the limit cuts you off.** When a window crosses a threshold (default 85%), a `Stop` hook tells Claude to commit work in progress, write a handoff note, and stop, instead of getting killed mid-task.
+2. **Stops cleanly before the limit cuts you off.** When a window crosses a threshold (default 98%), a `Stop` hook tells Claude to commit work in progress, write a handoff note, and stop, instead of getting killed mid-task.
 
 ```
 [PONYTAIL] [CAVEMAN] [USAGE 5h 42% 15:45 · 7d 18%] [CONTEXT 31%] [MODEL Opus]
 ```
 
-Each box has its own muted colour. A percentage keeps that colour, turns orange from 50%, and bold red at the threshold. `15:45` is when the 5-hour window resets.
+Each box has its own muted colour. A percentage keeps that colour, turns orange from 50%, and bold red at the threshold (default 98%). `15:45` is when the 5-hour window resets.
 
 It makes no API calls and costs no usage. It only reads data Claude Code already hands to the status line.
 
@@ -54,12 +54,12 @@ bash ~/.claude/usage-guard.sh selftest      # expect: selftest ok
 At the end of every turn the hook reads the cached numbers. If the 5-hour or 7-day window is at or above the threshold it returns:
 
 ```json
-{"decision":"block","reason":"Claude usage limit is at 91% (guard threshold 85%). Do not start new work. Commit work in progress, write a handoff note to the project PROGRESS.md (done / next / how to resume), then stop and tell the user the usage limit is nearly reached."}
+{"decision":"block","reason":"Claude usage limit is at 98% (guard threshold 98%). Do not start new work. Commit work in progress, write a handoff note to the project PROGRESS.md (done / next / how to resume), then stop and tell the user the usage limit is nearly reached."}
 ```
 
 Claude Code feeds that reason back to Claude, which does the commit and note, then stops. The hook fires **once per session per window**; after the window resets and usage drops below the threshold it re-arms. It never fires while `stop_hook_active` is set, so it cannot loop.
 
-Threshold: set `CLAUDE_USAGE_GUARD_PCT` (default `85`) in the environment Claude Code runs in, or in `settings.json` under `"env"`.
+Threshold: set `CLAUDE_USAGE_GUARD_PCT` (default `98`, so the guard only fires right before the cut-off and saves state; lower it if you want more headroom) in the environment Claude Code runs in, or in `settings.json` under `"env"`.
 
 ### What it cannot do
 

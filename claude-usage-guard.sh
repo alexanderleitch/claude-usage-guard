@@ -8,7 +8,7 @@
 #
 # Needs bash + jq (macOS: brew install jq | Windows: winget install jqlang.jq | Debian: apt install jq).
 # Windows: Claude Code runs hooks through Git Bash, so install Git for Windows first.
-# Threshold: CLAUDE_USAGE_GUARD_PCT (default 85). Config dir: CLAUDE_CONFIG_DIR (default ~/.claude).
+# Threshold: CLAUDE_USAGE_GUARD_PCT (default 98). Config dir: CLAUDE_CONFIG_DIR (default ~/.claude).
 #
 # How it works: Claude Code gives the status line command a JSON payload that
 # includes rate_limits.{five_hour,seven_day}.used_percentage. Hooks never get
@@ -22,7 +22,7 @@ SELF="$CFG/usage-guard.sh"
 SETTINGS="$CFG/settings.json"
 PREV="$CFG/usage-guard.prev-statusline"
 BADGES="$CFG/usage-guard.badges"     # one shell command per line; each gets the payload on stdin, output is prefixed to the line
-PCT="${CLAUDE_USAGE_GUARD_PCT:-85}"
+PCT="${CLAUDE_USAGE_GUARD_PCT:-98}"
 CACHE_DIR="${TMPDIR:-/tmp}"
 
 # a previous statusLine that is itself a plugin badge is already covered by the badges file
@@ -142,7 +142,7 @@ cmd_uninstall() {
 
 cmd_selftest() {
   local d out
-  d=$(mktemp -d); export CLAUDE_CONFIG_DIR="$d" TMPDIR="$d" CLAUDE_USAGE_GUARD_COLOR=0
+  d=$(mktemp -d); export CLAUDE_CONFIG_DIR="$d" TMPDIR="$d" CLAUDE_USAGE_GUARD_COLOR=0 CLAUDE_USAGE_GUARD_PCT=85
   out=$(printf '{"session_id":"c","rate_limits":{"five_hour":{"used_percentage":90},"seven_day":{"used_percentage":10}}}' | CLAUDE_USAGE_GUARD_COLOR=1 bash "$0" statusline)
   [[ "$out" == *$'\e[1;38;5;167m90%'* && "$out" == *$'\e[38;5;67m10%'* ]] || { echo "FAIL colour: $(printf '%q' "$out")"; exit 1; }
   hi='{"session_id":"t1","rate_limits":{"five_hour":{"used_percentage":91.4,"resets_at":1758640000},"seven_day":{"used_percentage":40}},"context_window":{"used_percentage":33},"model":{"display_name":"Test"}}'
