@@ -25,6 +25,9 @@ BADGES="$CFG/usage-guard.badges"     # one shell command per line; each gets the
 PCT="${CLAUDE_USAGE_GUARD_PCT:-85}"
 CACHE_DIR="${TMPDIR:-/tmp}"
 
+# a previous statusLine that is itself a plugin badge is already covered by the badges file
+is_badge_cmd() { case "$1" in *ponytail-statusline*|*caveman-statusline*) return 0 ;; *) return 1 ;; esac; }
+
 cache_path() { printf '%s/cc-limits-%s.json' "${CACHE_DIR%/}" "$1"; }
 
 cmd_statusline() {
@@ -39,7 +42,7 @@ cmd_statusline() {
     >"$(cache_path "$sid")" 2>/dev/null || true
   local badges="" b
   if [ -s "$BADGES" ]; then
-    while IFS= read -r cmd; do
+    while IFS= read -r cmd || [ -n "$cmd" ]; do
       [ -n "$cmd" ] && [ "${cmd#\#}" = "$cmd" ] || continue
       b=$(printf '%s' "$input" | bash -c "$cmd" 2>/dev/null || true)
       [ -n "$b" ] && badges="$badges$b "
@@ -54,7 +57,7 @@ cmd_statusline() {
       "ctx " + pc(.context_window.used_percentage),
       (.model.display_name // empty) ] | join(" | ")' <<<"$input"
   # chain whatever status line command was configured before install
-  if [ -s "$PREV" ]; then printf '%s' "$input" | bash -c "$(cat "$PREV")" 2>/dev/null || true; fi
+  if [ -s "$PREV" ] && ! is_badge_cmd "$(cat "$PREV")"; then printf '%s' "$input" | bash -c "$(cat "$PREV")" 2>/dev/null || true; fi
 }
 
 cmd_stop() {
@@ -83,7 +86,7 @@ cmd_install() {
   cp "$SETTINGS" "$SETTINGS.bak-usage-guard"
   local cur tmp
   cur=$(jq -r '.statusLine.command // empty' "$SETTINGS")
-  if [ -n "$cur" ] && [[ "$cur" != *usage-guard.sh* ]]; then printf '%s' "$cur" >"$PREV"; fi
+  if [ -n "$cur" ] && [[ "$cur" != *usage-guard.sh* ]] && ! is_badge_cmd "$cur"; then printf '%s' "$cur" >"$PREV"; fi
   # badges: known plugin statusline scripts, resolved at runtime so plugin version bumps survive
   if [ ! -e "$BADGES" ]; then
     {
@@ -125,6 +128,9 @@ cmd_selftest() {
   printf '# comment\nprintf "[B1]"\njq -r .model.display_name\n' >"$d/usage-guard.badges"
   out=$(printf '%s' "$hi" | bash "$0" statusline);                 [[ "$out" == "[B1] Test 5h 91% ("* ]]                   || { echo "FAIL badges: $out"; exit 1; }
   rm "$d/usage-guard.badges"
+  printf 'bash /x/ponytail-statusline.sh' >"$d/usage-guard.prev-statusline"; printf 'printf "[P]"' >"$d/usage-guard.badges"
+  out=$(printf '%s' "$hi" | bash "$0" statusline);                 [[ "$out" == "[P] 5h 91% ("*"Test" ]]                     || { echo "FAIL badge prev should be skipped: $out"; exit 1; }
+  rm "$d/usage-guard.prev-statusline" "$d/usage-guard.badges"
   out=$(printf '{"session_id":"t1"}' | bash "$0" stop);            [[ "$out" == *'"decision":"block"'* ]]            || { echo "FAIL stop should block: $out"; exit 1; }
   out=$(printf '{"session_id":"t1"}' | bash "$0" stop);            [ -z "$out" ]                                    || { echo "FAIL stop should block once: $out"; exit 1; }
   out=$(printf '{"session_id":"t1","stop_hook_active":true}' | bash "$0" stop); [ -z "$out" ]                       || { echo "FAIL stop_hook_active loop guard: $out"; exit 1; }
