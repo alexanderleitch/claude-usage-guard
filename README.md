@@ -77,6 +77,14 @@ The 7-day figure also checks whether you are on course to hit the limit before i
 7d 66% →146% out Mon 18:49  red: more than one workday of budget ahead; runs out Mon 18:49
 ```
 
+To set a Mon–Fri week, add this to `~/.claude/settings.json` (merge into an existing `"env"` block if there is one), then restart Claude Code:
+
+```json
+{
+  "env": { "CLAUDE_USAGE_GUARD_WORKDAYS": "12345" }
+}
+```
+
 Pace is `used ÷ working hours elapsed × working hours in the window`. "One workday of budget" is 100% ÷ workdays (20 points on a 5-day week). Nothing is shown during the first workday of a window, when the projection is too noisy. Public holidays and office hours are not modelled; a whole weekday counts.
 
 ## Badges
