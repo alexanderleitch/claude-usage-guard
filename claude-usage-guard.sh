@@ -8,7 +8,8 @@
 #
 # Needs bash + jq (macOS: brew install jq | Windows: winget install jqlang.jq | Debian: apt install jq).
 # Windows: Claude Code runs hooks through Git Bash, so install Git for Windows first.
-# Threshold: CLAUDE_USAGE_GUARD_PCT (default 98). Config dir: CLAUDE_CONFIG_DIR (default ~/.claude).
+# Threshold: CLAUDE_USAGE_GUARD_PCT (default 98). Working days for weekly pace: CLAUDE_USAGE_GUARD_WORKDAYS
+# (ISO weekday digits, default 1234567; 12345 = Mon-Fri). Config dir: CLAUDE_CONFIG_DIR (default ~/.claude).
 #
 # How it works: Claude Code gives the status line command a JSON payload that
 # includes rate_limits.{five_hour,seven_day}.used_percentage. Hooks never get
@@ -23,6 +24,7 @@ SETTINGS="$CFG/settings.json"
 PREV="$CFG/usage-guard.prev-statusline"
 BADGES="$CFG/usage-guard.badges"     # one shell command per line; each gets the payload on stdin, output is prefixed to the line
 PCT="${CLAUDE_USAGE_GUARD_PCT:-98}"
+WORKDAYS="${CLAUDE_USAGE_GUARD_WORKDAYS:-1234567}"
 CACHE_DIR="${TMPDIR:-/tmp}"
 
 # Windows jq ends lines with CRLF; strip CR so string/number compares work everywhere (pipefail keeps jq's exit status)
@@ -53,9 +55,10 @@ cmd_statusline() {
     jq -c '{f:(.rate_limits.five_hour.used_percentage // null),
             w:(.rate_limits.seven_day.used_percentage // null),
             fr:(.rate_limits.five_hour.resets_at // null),
+            wr:(.rate_limits.seven_day.resets_at // null),
             ctx:(.context_window.used_percentage // null)}' <<<"$input" >"$cache" 2>/dev/null || true
   elif [ -s "$cache" ]; then
-    input=$(jq -c --slurpfile c "$cache" '.rate_limits = {five_hour:{used_percentage:$c[0].f, resets_at:$c[0].fr}, seven_day:{used_percentage:$c[0].w}}' <<<"$input")
+    input=$(jq -c --slurpfile c "$cache" '.rate_limits = {five_hour:{used_percentage:$c[0].f, resets_at:$c[0].fr}, seven_day:{used_percentage:$c[0].w, resets_at:$c[0].wr}}' <<<"$input")
     jq -c --slurpfile c "$cache" '$c[0] + {ctx:(.context_window.used_percentage // $c[0].ctx)}' <<<"$input" >"$cache.tmp" 2>/dev/null && mv "$cache.tmp" "$cache" || true
   fi
   local badges="" b
@@ -68,16 +71,36 @@ cmd_statusline() {
   fi
   printf '%s' "$badges"
   # colours: each box its own colour; % inherits it, orange from 50%, bold red from the threshold. CLAUDE_USAGE_GUARD_COLOR=0 disables
-  jq -r --argjson pct "$PCT" --argjson color "${CLAUDE_USAGE_GUARD_COLOR:-1}" '
+  jq -r --argjson pct "$PCT" --argjson color "${CLAUDE_USAGE_GUARD_COLOR:-1}" --arg wd "$WORKDAYS" --argjson now "${CLAUDE_USAGE_GUARD_NOW:-null}" '
     def esc(c): if $color == 1 then "\u001b[" + c + "m" else "" end;
     def rst: esc("0");
     def tone(x; base): if x == null then esc("2") elif x >= $pct then esc("1;38;5;167") elif x >= 50 then esc("38;5;173") else esc(base) end;
     def pc(x): if x == null then "-" else ((x|floor)|tostring) + "%" end;
     def rs(x): if x == null then "" else esc("2") + " " + (x|floor|strflocaltime("%H:%M")) + rst end;
     def val(x; base): tone(x; base) + pc(x) + rst;
+    # weekly pace over working hours only: orange projection when on course to exceed 100% by reset,
+    # red + run-out time when more than one workday of budget ahead. Silent during the first workday.
+    # ponytail: whole-hour slots, whole weekdays count; no holidays or office hours
+    def pace(u; r):
+      u as $u | r as $r |
+      if $u == null or $r == null or $u <= 0 then "" else
+      ($now // now) as $t |
+      [range(0; 168) | ($r - 604800 + . * 3600) as $s
+        | {s: $s, w: (if ($wd | index($s | strflocaltime("%u"))) then 1 else 0 end)}] as $h |
+      ($h | map(.w) | add) as $T |
+      ($h | map(.w * ((($t - .s) / 3600) | if . < 0 then 0 elif . > 1 then 1 else . end)) | add) as $e |
+      if $T == 0 or $e < 24 then "" else
+      ($u * $T / $e) as $proj |
+      if $u - $e / $T * 100 > 2400 / $T then
+        ($e * 100 / $u) as $tgt |
+        ($h | reduce .[] as $x ({c: 0, at: null};
+          if .at == null and $x.w == 1 and .c + 1 >= $tgt then .at = $x.s + ($tgt - .c) * 3600 else .c += $x.w end)) as $o |
+        esc("1;38;5;167") + " →" + ($proj | floor | tostring) + "%" + (if $o.at then " out " + ($o.at | floor | strflocaltime("%a %H:%M")) else "" end) + rst
+      elif $proj > 100 then esc("38;5;173") + " →" + ($proj | floor | tostring) + "%" + rst
+      else "" end end end;
     def box(word; base; body): esc(base) + "[" + word + " " + body + esc(base) + "]" + rst;
     ("38;5;67") as $u | ("38;5;139") as $c | ("38;5;73") as $m |
-    [ box("USAGE"; $u; "5h " + val(.rate_limits.five_hour.used_percentage; $u) + rs(.rate_limits.five_hour.resets_at) + esc($u) + " · 7d " + val(.rate_limits.seven_day.used_percentage; $u)),
+    [ box("USAGE"; $u; "5h " + val(.rate_limits.five_hour.used_percentage; $u) + rs(.rate_limits.five_hour.resets_at) + esc($u) +  " · 7d " + val(.rate_limits.seven_day.used_percentage; $u) + pace(.rate_limits.seven_day.used_percentage; .rate_limits.seven_day.resets_at)),
       box("CONTEXT"; $c; val(.context_window.used_percentage; $c)),
       (.model.display_name // empty | box("MODEL"; $m; .)) ] | join(" ")' <<<"$input"
   # chain whatever status line command was configured before install
@@ -170,6 +193,17 @@ cmd_selftest() {
   out=$(printf '{"session_id":"t1","context_window":{"used_percentage":50}}' | bash "$0" statusline); [[ "$out" == "[USAGE 5h 91% "*" · 7d 40%] [CONTEXT 50%]" ]] || { echo "FAIL sticky limits: $out"; exit 1; }
   out=$(printf '{"session_id":"t1","context_window":{"context_window_size":200000,"current_usage":{"input_tokens":40000,"cache_read_input_tokens":20000}}}' | bash "$0" statusline); [[ "$out" == *"[CONTEXT 30%]" ]] || { echo "FAIL ctx from tokens: $out"; exit 1; }
   out=$(printf '{"session_id":"t1"}' | bash "$0" statusline);      [[ "$out" == *"[CONTEXT 30%]" ]]                      || { echo "FAIL sticky ctx: $out"; exit 1; }
+  # weekly pace: reset Wed 2026-10-14 09:00 UTC, now Fri 15:00 = 54 work hours into a 120h (Mon-Fri) window
+  wk() { printf '{"session_id":"p%s","rate_limits":{"five_hour":{"used_percentage":1},"seven_day":{"used_percentage":%s,"resets_at":1791968400}}}' "$1" "$1"; }
+  pace() { TZ=UTC CLAUDE_USAGE_GUARD_NOW="$1" CLAUDE_USAGE_GUARD_WORKDAYS="$2" bash "$0" statusline; }
+  out=$(wk 40 | pace 1791558000 12345);  [[ "$out" == *"7d 40%]"* ]]                        || { echo "FAIL pace under: $out"; exit 1; }
+  out=$(wk 55 | pace 1791558000 12345);  [[ "$out" == *"7d 55% →122%]"* ]]                  || { echo "FAIL pace over: $out"; exit 1; }
+  out=$(wk 66 | pace 1791558000 12345);  [[ "$out" == *"7d 66% →146% out Mon 18:49]"* ]]    || { echo "FAIL pace day ahead: $out"; exit 1; }
+  out=$(wk 40 | pace 1791558000 1234567); [[ "$out" == *"7d 40% →124%]"* ]]                 || { echo "FAIL pace 7-day week: $out"; exit 1; }
+  out=$(wk 50 | pace 1791403200 12345);  [[ "$out" == *"7d 50%]"* ]]                        || { echo "FAIL pace first day: $out"; exit 1; }
+  out=$(printf '{"session_id":"p66"}' | pace 1791558000 12345); [[ "$out" == *"→146% out Mon 18:49]"* ]] || { echo "FAIL pace sticky reset: $out"; exit 1; }
+  out=$(wk 66 | CLAUDE_USAGE_GUARD_COLOR=1 pace 1791558000 12345); [[ "$out" == *$'\e[1;38;5;167m →146% out'* ]] || { echo "FAIL pace red: $(printf '%q' "$out")"; exit 1; }
+  out=$(wk 55 | CLAUDE_USAGE_GUARD_COLOR=1 pace 1791558000 12345); [[ "$out" == *$'\e[38;5;173m →122%'* ]]       || { echo "FAIL pace orange: $(printf '%q' "$out")"; exit 1; }
   [ -s "$d/stderr" ] && { echo "FAIL stderr not empty:"; cat "$d/stderr"; exit 1; }
   rm -rf "$d"; echo "selftest ok"
 }

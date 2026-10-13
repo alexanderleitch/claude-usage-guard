@@ -67,6 +67,18 @@ Threshold: set `CLAUDE_USAGE_GUARD_PCT` (default `98`, so the guard only fires r
 - No hook event exists for an approaching limit, and hooks never receive `rate_limits`. This script bridges that gap by having the status line cache the numbers. If Anthropic adds the field to hook payloads, the cache becomes unnecessary.
 - `StopFailure` fires *after* a limit is hit and its output is ignored, so it can only alert, not steer. Pair this guard with `autoContinueAtUsageLimit` (on by default for subscriptions) so a hit becomes a pause rather than a loss.
 
+## Weekly pace
+
+The 7-day figure also checks whether you are on course to hit the limit before it resets. It counts working hours only, so set your working days as ISO weekday digits in `CLAUDE_USAGE_GUARD_WORKDAYS` (default `1234567`; `12345` for Mon–Fri). The reset time comes from Claude Code itself.
+
+```
+7d 40%                      on pace, nothing extra
+7d 55% →122%                orange: at this pace you reach 122% by the reset
+7d 66% →146% out Mon 18:49  red: more than one workday of budget ahead; runs out Mon 18:49
+```
+
+Pace is `used ÷ working hours elapsed × working hours in the window`. "One workday of budget" is 100% ÷ workdays (20 points on a 5-day week). Nothing is shown during the first workday of a window, when the projection is too noisy. Public holidays and office hours are not modelled; a whole weekday counts.
+
 ## Badges
 
 `~/.claude/usage-guard.badges` is a plain file with one shell command per line. Each command receives the status-line JSON on stdin and whatever it prints is shown before the usage boxes. Lines starting with `#` are ignored. The installer pre-fills:
