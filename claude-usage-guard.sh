@@ -98,9 +98,12 @@ cmd_statusline() {
         esc("1;38;5;167") + " →" + ($proj | floor | tostring) + "%" + (if $o.at then " out " + ($o.at | floor | strflocaltime("%a %H:%M")) else "" end) + rst
       elif $proj > 100 then esc("38;5;173") + " →" + ($proj | floor | tostring) + "%" + rst
       else "" end end end;
+    # weekly label counts the days left in the window: 7d right after reset, 1d on the last day; "7d" until the reset is known
+    def left(r): if r == null then "7d" else (r - ($now // now)) as $d |
+      (if $d <= 0 then 7 else [($d / 86400 | ceil), 7] | min end | tostring) + "d" end;
     def box(word; base; body): esc(base) + "[" + word + " " + body + esc(base) + "]" + rst;
     ("38;5;67") as $u | ("38;5;139") as $c | ("38;5;73") as $m |
-    [ box("USAGE"; $u; "5h " + val(.rate_limits.five_hour.used_percentage; $u) + rs(.rate_limits.five_hour.resets_at) + esc($u) +  " · 7d " + val(.rate_limits.seven_day.used_percentage; $u) + pace(.rate_limits.seven_day.used_percentage; .rate_limits.seven_day.resets_at)),
+    [ box("USAGE"; $u; "5h " + val(.rate_limits.five_hour.used_percentage; $u) + rs(.rate_limits.five_hour.resets_at) + esc($u) +  " · " + left(.rate_limits.seven_day.resets_at) + " " + val(.rate_limits.seven_day.used_percentage; $u) + pace(.rate_limits.seven_day.used_percentage; .rate_limits.seven_day.resets_at)),
       box("CONTEXT"; $c; val(.context_window.used_percentage; $c)),
       (.model.display_name // empty | box("MODEL"; $m; .)) ] | join(" ")' <<<"$input"
   # chain whatever status line command was configured before install
@@ -196,11 +199,13 @@ cmd_selftest() {
   # weekly pace: reset Wed 2026-10-14 09:00 UTC, now Fri 15:00 = 54 work hours into a 120h (Mon-Fri) window
   wk() { printf '{"session_id":"p%s","rate_limits":{"five_hour":{"used_percentage":1},"seven_day":{"used_percentage":%s,"resets_at":1791968400}}}' "$1" "$1"; }
   pace() { TZ=UTC CLAUDE_USAGE_GUARD_NOW="$1" CLAUDE_USAGE_GUARD_WORKDAYS="$2" bash "$0" statusline; }
-  out=$(wk 40 | pace 1791558000 12345);  [[ "$out" == *"7d 40%]"* ]]                        || { echo "FAIL pace under: $out"; exit 1; }
-  out=$(wk 55 | pace 1791558000 12345);  [[ "$out" == *"7d 55% →122%]"* ]]                  || { echo "FAIL pace over: $out"; exit 1; }
-  out=$(wk 66 | pace 1791558000 12345);  [[ "$out" == *"7d 66% →146% out Mon 18:49]"* ]]    || { echo "FAIL pace day ahead: $out"; exit 1; }
-  out=$(wk 40 | pace 1791558000 1234567); [[ "$out" == *"7d 40% →124%]"* ]]                 || { echo "FAIL pace 7-day week: $out"; exit 1; }
+  out=$(wk 40 | pace 1791558000 12345);  [[ "$out" == *"5d 40%]"* ]]                        || { echo "FAIL pace under: $out"; exit 1; }
+  out=$(wk 55 | pace 1791558000 12345);  [[ "$out" == *"5d 55% →122%]"* ]]                  || { echo "FAIL pace over: $out"; exit 1; }
+  out=$(wk 66 | pace 1791558000 12345);  [[ "$out" == *"5d 66% →146% out Mon 18:49]"* ]]    || { echo "FAIL pace day ahead: $out"; exit 1; }
+  out=$(wk 40 | pace 1791558000 1234567); [[ "$out" == *"5d 40% →124%]"* ]]                 || { echo "FAIL pace 7-day week: $out"; exit 1; }
   out=$(wk 50 | pace 1791403200 12345);  [[ "$out" == *"7d 50%]"* ]]                        || { echo "FAIL pace first day: $out"; exit 1; }
+  out=$(wk 30 | pace 1791903000 12345);  [[ "$out" == *" · 1d 30%]"* ]]                     || { echo "FAIL countdown last day: $out"; exit 1; }
+  out=$(wk 30 | pace 1791968460 12345);  [[ "$out" == *" · 7d 30%]"* ]]                      || { echo "FAIL countdown after reset: $out"; exit 1; }
   out=$(printf '{"session_id":"p66"}' | pace 1791558000 12345); [[ "$out" == *"→146% out Mon 18:49]"* ]] || { echo "FAIL pace sticky reset: $out"; exit 1; }
   out=$(wk 66 | CLAUDE_USAGE_GUARD_COLOR=1 pace 1791558000 12345); [[ "$out" == *$'\e[1;38;5;167m →146% out'* ]] || { echo "FAIL pace red: $(printf '%q' "$out")"; exit 1; }
   out=$(wk 55 | CLAUDE_USAGE_GUARD_COLOR=1 pace 1791558000 12345); [[ "$out" == *$'\e[38;5;173m →122%'* ]]       || { echo "FAIL pace orange: $(printf '%q' "$out")"; exit 1; }

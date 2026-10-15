@@ -9,7 +9,7 @@ A small bash tool for [Claude Code](https://code.claude.com) (one script plus an
 [PONYTAIL] [CAVEMAN] [USAGE 5h 42% 15:45 · 7d 18%] [CONTEXT 31%] [MODEL Opus]
 ```
 
-Each box has its own muted colour. A percentage keeps that colour, turns orange from 50%, and bold red at the threshold (default 98%). `15:45` is when the 5-hour window resets.
+Each box has its own muted colour. A percentage keeps that colour, turns orange from 50%, and bold red at the threshold (default 98%). `15:45` is when the 5-hour window resets. The weekly label counts the days left in the 7-day window: `7d` right after it resets, down to `1d` on the last day.
 
 It makes no API calls and costs no usage. It only reads data Claude Code already hands to the status line.
 
@@ -72,9 +72,9 @@ Threshold: set `CLAUDE_USAGE_GUARD_PCT` (default `98`, so the guard only fires r
 The 7-day figure also checks whether you are on course to hit the limit before it resets. It counts working hours only, so set your working days as ISO weekday digits in `CLAUDE_USAGE_GUARD_WORKDAYS` (default `1234567`; `12345` for Mon–Fri). The reset time comes from Claude Code itself.
 
 ```
-7d 40%                      on pace, nothing extra
-7d 55% →122%                orange: at this pace you reach 122% by the reset
-7d 66% →146% out Mon 18:49  red: more than one workday of budget ahead; runs out Mon 18:49
+3d 40%                      on pace, nothing extra
+3d 55% →122%                orange: at this pace you reach 122% by the reset
+3d 66% →146% out Mon 18:49  red: more than one workday of budget ahead; runs out Mon 18:49
 ```
 
 To set a Mon–Fri week, add this to `~/.claude/settings.json` (merge into an existing `"env"` block if there is one), then restart Claude Code:
